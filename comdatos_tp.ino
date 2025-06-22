@@ -2,13 +2,8 @@
 #include <WiFiMulti.h>
 #include <PubSubClient.h>
 
-int sensorPin = 32;   // select the input pin for the potentiometer
-int ledPin = 13;      // select the pin for the LED
-int sensorValue = 0;  // variable to store the value coming from the sensor
-
 const char *mqtt_broker = "broker.emqx.io";
-const char *topic = "santiagocezar/rgblitz";
-const char *topic_out = "santiagocezar/rgblitz-out";
+const char *topic = "utn-frsfco/comedero";
 const char *mqtt_username = "santiagocezar";
 const char *mqtt_password = "rgblitz0401";
 const int mqtt_port = 1883;
@@ -33,44 +28,47 @@ void mqttSetup(void) {
     }
   }
 
-  client.publish(topic, "juego para el MUIC");
+  client.publish(topic, R"({"ok":true})");
   client.subscribe(topic);
 }
 
 void callback(char *topic, byte *data, unsigned int length) {
   byte command = data[0];
+}
 
-  switch (command) {
-    case HELLO: break;
-    case SET_LED:
-      if (length == 8) {
-        float d = distanceRGB(data[5], data[6], data[7], guessR, guessG, guessB);
+const int platoPin = 32;
+const int tanqueEcho = 33;
+const int tanqueTrig = 25;
+int platoValue = 0;
+long tanqueValue = 0;
 
-        Serial.printf("distance: %.2f\n", d);
+long getDistance() {
+  long duration, distanceCm;
 
-        setLed(LED1, data[5], data[6], data[7]);
-        if (d > closest) {
-          // setLed(LED1, data[5], data[6], data[7]);
-          closest = d;
-          byte* res = (byte*)malloc(6);
-          memcpy(res, data, 6);
-          res[0] = CLOSEST_CLIENT;
-          res[5] = (int)d;
-          client.publish(topic_out, res, 6);
-          free(res);
-        }
-        if (d > 80) {
-          randomize();
-        }
-      }
-      break;
-  }
-  //setLed(data[0] == 1 ? LED1 : LED2, data[1], data[2], data[3]);
+  digitalWrite(tanqueTrig, LOW);  //para generar un pulso limpio ponemos a LOW 4us
+  delayMicroseconds(4);
+  digitalWrite(tanqueTrig, HIGH);  //generamos Trigger (disparo) de 10us
+  delayMicroseconds(10);
+  digitalWrite(tanqueTrig, LOW);
+
+  duration = pulseIn(tanqueEcho, HIGH);  // medimos el tiempo entre pulsos, en microsegundos
+
+  // 340 (velocidad del sonido en metros por segundo) / 10⁶ (conversión de µs a s) / 2 (ida y vuelta) × 100 (m a cm)
+  // = 0,017 ≈ 1 / 50
+  distanceCm = duration / 58;
+
+  // Serial.print("distancia (en cm): ");
+  // Serial.println(distanceCm);
+
+  return distanceCm;
 }
 
 void setup() {
   // declare the ledPin as an OUTPUT:
-  pinMode(sensorPin, INPUT);
+  pinMode(platoPin, INPUT);
+  pinMode(tanqueTrig, OUTPUT); //pin como salida
+  pinMode(tanqueEcho, INPUT);  //pin como entrada
+  digitalWrite(tanqueTrig, LOW);  //pin como entrada
   Serial.begin(115200);
 
   wifiMulti.addAP("UTN_FRSFCO_LIBRE");
@@ -101,9 +99,17 @@ void setup() {
 
 void loop() {
   // read the value from the sensor:
-  sensorValue = analogRead(sensorPin);
-  // turn the ledPin on
-  Serial.printf("valor potenciometro: %03.2f%\n", sensorValue / 4095.0 * 100.0);
-  
+  platoValue = analogRead(platoPin);
+  tanqueValue = getDistance();
+
+  String json = "{";
+  json += "\"plato\":"+String(platoValue / 4095.0 * 100.0)+",";
+  json += "\"tanque\":"+String(tanqueValue);
+  json += "}";
+
+  client.publish(topic, json.c_str());
+
   client.loop();
+
+  delay(500);
 }
